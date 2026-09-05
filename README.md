@@ -26,6 +26,10 @@ Place on the bar if needed:
 omarchy bar put io.github.wolften.steam-favorites --section left
 ```
 
+## UI
+
+Panel shows a **2-column grid** with Steam CDN covers (`library_600x900`, falling back to `capsule_231x87`) and titles clipped with ellipsis. Covers are public CDN URLs by appid — no Steam Web API scraping.
+
 ## Usage
 
 1. Click **Steam** on the bar to open the panel.
