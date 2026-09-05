@@ -82,11 +82,11 @@ Panel {
         if (data.games && data.games.length) {
           root.games = data.games
           root.statusText = data.games.length + " jogo(s)"
-          root.noteText = data.note || ""
+          root.noteText = ""
         } else {
           root.games = []
           root.statusText = data.error || "Nenhum jogo instalado"
-          root.noteText = data.note || "Só lista jogos com appmanifest (instalados)."
+          root.noteText = ""
         }
       } catch (e) {
         root.games = []
@@ -117,40 +117,78 @@ Panel {
       Column {
         id: headerCol
         width: parent.width
-        spacing: Style.space(8)
+        spacing: Style.space(10)
 
-        Row {
+        Item {
           width: parent.width
-          spacing: Style.space(8)
+          height: Math.max(titleCol.implicitHeight, refreshHit.implicitHeight)
 
-          Text {
-            text: "Steam Favorites"
-            color: root.barForeground
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.subtitle
-            font.bold: true
-            elide: Text.ElideRight
-            width: parent.width - Style.space(40)
-          }
+          Column {
+            id: titleCol
+            anchors.left: parent.left
+            anchors.right: refreshHit.left
+            anchors.rightMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
 
-          WidgetButton {
-            bar: root.bar
-            text: "↻"
-            tooltipText: "Atualizar lista"
-            onPressed: function(buttonCode) {
-              if (buttonCode === Qt.LeftButton) root.refreshGames()
+            Text {
+              width: parent.width
+              text: "Steam Favorites"
+              color: root.barForeground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.subtitle
+              font.bold: true
+              elide: Text.ElideRight
+            }
+
+            Text {
+              width: parent.width
+              text: root.statusText
+              color: root.barForeground
+              opacity: 0.65
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
             }
           }
-        }
 
-        Text {
-          width: parent.width
-          text: root.statusText
-          color: root.barForeground
-          opacity: 0.7
-          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
+          // Compact refresh control — icon only, right-aligned.
+          Item {
+            id: refreshHit
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: Style.space(28)
+            implicitHeight: Style.space(28)
+            width: implicitWidth
+            height: implicitHeight
+
+            Rectangle {
+              anchors.fill: parent
+              radius: width / 2
+              color: refreshMouse.containsMouse
+                ? Style.hoverFillFor(root.barForeground, Color.accent)
+                : "transparent"
+            }
+
+            Text {
+              anchors.centerIn: parent
+              text: "󰑓"
+              color: root.barForeground
+              opacity: refreshMouse.containsMouse ? 1.0 : 0.7
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.icon
+            }
+
+            MouseArea {
+              id: refreshMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.refreshGames()
+              onEntered: if (root.bar) root.bar.showTooltip(root, "Atualizar")
+              onExited: if (root.bar) root.bar.hideTooltip(root)
+            }
+          }
         }
 
         Text {

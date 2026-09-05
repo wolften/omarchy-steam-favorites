@@ -140,7 +140,7 @@ def discover() -> dict:
                 "ok": True,
                 "error": None,
                 "games": [],
-                "note": "Steam not found; cannot verify installed games. Install Steam or fix paths.",
+                "note": None,
             }
         return {
             "ok": False,
@@ -208,11 +208,7 @@ def discover() -> dict:
         "error": None,
         "steamRoots": [str(r) for r in roots],
         "games": games,
-        "note": (
-            "Showing installed games (no favorites found in VDF)."
-            if games and all(g.get("source") == "installed" for g in games)
-            else None
-        ),
+        "note": None,
     }
 
 
