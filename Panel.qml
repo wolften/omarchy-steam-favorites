@@ -16,6 +16,12 @@ Panel {
   property string statusText: "Carregando…"
   property string noteText: ""
 
+  readonly property int panelWidth: Style.space(360)
+  readonly property int gridGap: Style.space(8)
+  readonly property int cellWidth: Math.floor((panelWidth - gridGap) / 2)
+  readonly property int coverHeight: Style.space(96)
+  readonly property int cellHeight: coverHeight + Style.space(36)
+
   function open() {
     refreshGames()
     root.controller.show()
@@ -48,6 +54,14 @@ Panel {
     Qt.openUrlExternally("steam://rungameid/" + appid)
   }
 
+  function libraryCoverUrl(appid) {
+    return "https://cdn.cloudflare.steamstatic.com/steam/apps/" + appid + "/library_600x900.jpg"
+  }
+
+  function capsuleCoverUrl(appid) {
+    return "https://cdn.cloudflare.steamstatic.com/steam/apps/" + appid + "/capsule_231x87.jpg"
+  }
+
   Process {
     id: discover
     stdout: StdioCollector {
@@ -68,11 +82,11 @@ Panel {
         if (data.games && data.games.length) {
           root.games = data.games
           root.statusText = data.games.length + " jogo(s)"
-          root.noteText = data.note || ""
+          root.noteText = ""
         } else {
           root.games = []
           root.statusText = data.error || "Nenhum jogo instalado"
-          root.noteText = data.note || "Só lista jogos com appmanifest (instalados)."
+          root.noteText = ""
         }
       } catch (e) {
         root.games = []
@@ -89,8 +103,10 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(320))
-    contentHeight: panel.fittedContentHeight(Math.min(Style.space(420), content.implicitHeight + Style.space(16)))
+    contentWidth: panel.fittedContentWidth(root.panelWidth)
+    contentHeight: panel.fittedContentHeight(
+      Math.min(Style.space(460), headerCol.implicitHeight + gameFlick.implicitHeight + Style.space(16))
+    )
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -99,42 +115,80 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
       Column {
-        id: content
+        id: headerCol
         width: parent.width
-        spacing: Style.space(8)
+        spacing: Style.space(10)
 
-        Row {
+        Item {
           width: parent.width
-          spacing: Style.space(8)
+          height: Math.max(titleCol.implicitHeight, refreshHit.implicitHeight)
 
-          Text {
-            text: "Steam Favorites"
-            color: root.barForeground
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.subtitle
-            font.bold: true
-          }
+          Column {
+            id: titleCol
+            anchors.left: parent.left
+            anchors.right: refreshHit.left
+            anchors.rightMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
 
-          Item { width: Style.space(8); height: 1 }
+            Text {
+              width: parent.width
+              text: "Steam Favorites"
+              color: root.barForeground
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.subtitle
+              font.bold: true
+              elide: Text.ElideRight
+            }
 
-          WidgetButton {
-            bar: root.bar
-            text: "↻"
-            tooltipText: "Atualizar lista"
-            onPressed: function(buttonCode) {
-              if (buttonCode === Qt.LeftButton) root.refreshGames()
+            Text {
+              width: parent.width
+              text: root.statusText
+              color: root.barForeground
+              opacity: 0.65
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
             }
           }
-        }
 
-        Text {
-          width: parent.width
-          text: root.statusText
-          color: root.barForeground
-          opacity: 0.7
-          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
+          // Compact refresh control — icon only, right-aligned.
+          Item {
+            id: refreshHit
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: Style.space(28)
+            implicitHeight: Style.space(28)
+            width: implicitWidth
+            height: implicitHeight
+
+            Rectangle {
+              anchors.fill: parent
+              radius: width / 2
+              color: refreshMouse.containsMouse
+                ? Style.hoverFillFor(root.barForeground, Color.accent)
+                : "transparent"
+            }
+
+            Text {
+              anchors.centerIn: parent
+              text: "󰑓"
+              color: root.barForeground
+              opacity: refreshMouse.containsMouse ? 1.0 : 0.7
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.icon
+            }
+
+            MouseArea {
+              id: refreshMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.refreshGames()
+              onEntered: if (root.bar) root.bar.showTooltip(root, "Atualizar")
+              onExited: if (root.bar) root.bar.hideTooltip(root)
+            }
+          }
         }
 
         Text {
@@ -146,20 +200,116 @@ Panel {
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
+          maximumLineCount: 2
+          elide: Text.ElideRight
         }
 
-        Repeater {
-          model: root.games
+        Flickable {
+          id: gameFlick
+          width: parent.width
+          // Grow with content up to a cap so the popup stays on-screen.
+          height: Math.min(Style.space(360), grid.implicitHeight)
+          implicitHeight: height
+          contentWidth: width
+          contentHeight: grid.implicitHeight
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          flickableDirection: Flickable.VerticalFlick
+          visible: root.games.length > 0
 
-          delegate: WidgetButton {
-            required property var modelData
-            width: content.width
-            bar: root.bar
-            text: modelData.name || ("App " + modelData.appid)
-            tooltipText: "Abrir steam://rungameid/" + modelData.appid
-            onPressed: function(buttonCode) {
-              if (buttonCode === Qt.LeftButton)
-                root.launchGame(modelData.appid)
+          Grid {
+            id: grid
+            width: gameFlick.width
+            columns: 2
+            columnSpacing: root.gridGap
+            rowSpacing: root.gridGap
+
+            Repeater {
+              model: root.games
+
+              delegate: Item {
+                id: cell
+                required property var modelData
+                width: root.cellWidth
+                height: root.cellHeight
+
+                readonly property int appid: modelData.appid
+                readonly property string gameName: modelData.name || ("App " + modelData.appid)
+                property bool useCapsule: false
+
+                Rectangle {
+                  id: card
+                  anchors.fill: parent
+                  radius: Style.spacing.labelGap
+                  color: Style.normalFillFor(root.barForeground, Color.accent)
+                  clip: true
+
+                  Column {
+                    anchors.fill: parent
+                    anchors.margins: Style.space(4)
+                    spacing: Style.space(4)
+
+                    Item {
+                      width: parent.width
+                      height: root.coverHeight
+
+                      Image {
+                        id: cover
+                        anchors.fill: parent
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        cache: true
+                        source: cell.useCapsule
+                          ? root.capsuleCoverUrl(cell.appid)
+                          : root.libraryCoverUrl(cell.appid)
+                        onStatusChanged: {
+                          if (status === Image.Error && !cell.useCapsule) {
+                            cell.useCapsule = true
+                          }
+                        }
+                      }
+
+                      // Fallback glyph when CDN art is missing.
+                      Rectangle {
+                        anchors.fill: parent
+                        visible: cover.status !== Image.Ready
+                        color: Qt.rgba(0, 0, 0, 0.12)
+
+                        Text {
+                          anchors.centerIn: parent
+                          text: "󰖹"
+                          color: root.barForeground
+                          opacity: 0.55
+                          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                          font.pixelSize: Style.font.display
+                        }
+                      }
+                    }
+
+                    Text {
+                      width: parent.width
+                      text: cell.gameName
+                      color: root.barForeground
+                      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                      elide: Text.ElideRight
+                      maximumLineCount: 2
+                      wrapMode: Text.WordWrap
+                      horizontalAlignment: Text.AlignHCenter
+                    }
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.launchGame(cell.appid)
+                    onEntered: if (root.bar) root.bar.showTooltip(root, cell.gameName)
+                    onExited: if (root.bar) root.bar.hideTooltip(root)
+                  }
+                }
+              }
             }
           }
         }
