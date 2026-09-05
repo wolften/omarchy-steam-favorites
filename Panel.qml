@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import Quickshell
@@ -13,46 +15,66 @@ Panel {
   property var anchorItem: null
   property var hostWidget: null
   property var games: []
-  property string statusText: "Carregando…"
+  property string statusText: "Loading…"
   property string noteText: ""
+  property int cursorIndex: 0
+  property bool cursorActive: false
 
-  readonly property int panelWidth: Style.space(380)
-  readonly property int gridGap: Style.space(10)
-  readonly property int cellWidth: Math.floor((panelWidth - gridGap) / 2)
-  readonly property int coverHeight: Style.space(110)
-  readonly property int cardRadius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(10)
-  readonly property int gameIconSize: Style.space(22)
+  readonly property var barIdentity: hostWidget || root
+  readonly property color contentForeground: bar ? bar.foreground : Color.foreground
+  readonly property color iconColor: bar ? bar.barForeground : Color.foreground
+  readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
+
+  readonly property int columns: 2
+  readonly property int panelWidth: Style.space(280)
+  readonly property int gridGap: Style.spacing.md
+  readonly property int maxGridHeight: Style.space(420)
 
   function open() {
     refreshGames()
     root.controller.show()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   function close() {
+    cursorActive = false
     root.controller.hide()
+  }
+
+  function toggle() {
+    if (root.opened) root.close()
+    else root.open()
   }
 
   function switchPanel(direction) {
     if (root.bar && typeof root.bar.switchPanelFrom === "function")
-      return root.bar.switchPanelFrom(root.hostWidget || root, direction)
+      return root.bar.switchPanelFrom(root.barIdentity, direction)
     return false
   }
 
   function pluginDir() {
-    return Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "").replace(/\/$/, "")
+    var url = Qt.resolvedUrl(".").toString()
+    if (url.indexOf("file://") === 0) url = url.substring(7)
+    return url.replace(/\/$/, "")
   }
 
   function refreshGames() {
-    statusText = "Carregando…"
+    if (games.length === 0) statusText = "Loading…"
     noteText = ""
-    games = []
     discover.running = false
     discover.command = ["python3", pluginDir() + "/scripts/discover-favorites.py"]
     discover.running = true
   }
 
   function launchGame(appid) {
+    if (!appid) return
     Qt.openUrlExternally("steam://rungameid/" + appid)
+  }
+
+  function displayName(game) {
+    if (game && game.name) return String(game.name)
+    if (game && game.appid) return "App " + game.appid
+    return "Game"
   }
 
   function libraryCoverUrl(appid) {
@@ -60,49 +82,58 @@ Panel {
   }
 
   function capsuleCoverUrl(appid) {
-    return "https://cdn.cloudflare.steamstatic.com/steam/apps/" + appid + "/capsule_231x87.jpg"
+    return "https://cdn.cloudflare.steamstatic.com/steam/apps/" + appid + "/library_capsule.jpg"
   }
 
   function headerCoverUrl(appid) {
     return "https://cdn.cloudflare.steamstatic.com/steam/apps/" + appid + "/header.jpg"
   }
 
-  // Clean display name only — never prefix with source/installed labels.
-  function displayName(game) {
-    if (game && game.name) return String(game.name)
-    if (game && game.appid) return "App " + game.appid
-    return "Jogo"
+  function moveCursor(dx, dy) {
+    if (games.length === 0) return
+    if (!cursorActive) {
+      cursorActive = true
+      cursorIndex = 0
+      return
+    }
+    var next = cursorIndex
+    if (dx !== 0) next += dx
+    if (dy !== 0) next += dy * columns
+    cursorIndex = Math.max(0, Math.min(games.length - 1, next))
+  }
+
+  function activateCursor() {
+    if (!cursorActive || games.length === 0) return
+    var game = games[Math.max(0, Math.min(cursorIndex, games.length - 1))]
+    if (game) launchGame(game.appid)
   }
 
   Process {
     id: discover
-    stdout: StdioCollector {
-      id: outCollector
-    }
-    stderr: StdioCollector {
-      id: errCollector
-    }
+    stdout: StdioCollector { id: outCollector }
+    stderr: StdioCollector { id: errCollector }
     onExited: function(exitCode, exitStatus) {
       if (exitCode !== 0 && (!outCollector.text || outCollector.text.length === 0)) {
         root.games = []
-        root.statusText = "Falha ao descobrir jogos"
-        root.noteText = (errCollector.text || "python3 / script indisponível").trim()
+        root.statusText = "Could not find games"
+        root.noteText = (errCollector.text || "python3 / script unavailable").trim()
         return
       }
       try {
         var data = JSON.parse(outCollector.text)
         if (data.games && data.games.length) {
           root.games = data.games
-          root.statusText = data.games.length === 1 ? "1 jogo" : data.games.length + " jogos"
+          root.statusText = data.games.length === 1 ? "1 game" : data.games.length + " games"
           root.noteText = ""
+          root.cursorIndex = Math.min(root.cursorIndex, data.games.length - 1)
         } else {
           root.games = []
-          root.statusText = data.error || "Nenhum jogo encontrado"
+          root.statusText = data.error || "No games found"
           root.noteText = ""
         }
       } catch (e) {
         root.games = []
-        root.statusText = "Falha ao ler lista da Steam"
+        root.statusText = "Could not read Steam library"
         root.noteText = String(e)
       }
     }
@@ -116,64 +147,46 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(root.panelWidth)
-    contentHeight: panel.fittedContentHeight(
-      Math.min(Style.space(480), bodyCol.implicitHeight + Style.space(4))
-    )
+    contentHeight: panel.fittedContentHeight(bodyCol.implicitHeight, Style.space(640))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      onMoveRequested: function(dx, dy) { root.moveCursor(dx, dy) }
+      onActivateRequested: root.activateCursor()
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
+      onTextKey: function(t) {
+        if (t === "r" || t === "R") root.refreshGames()
+      }
 
       Column {
         id: bodyCol
         width: parent.width
-        spacing: Style.space(10)
+        spacing: Style.spacing.panelGap
 
-        // ---- Header (padrão Omarchy: título + ação à direita) ----
-        Row {
+        PanelHero {
+          id: hero
           width: parent.width
-          height: Math.max(titleCol.implicitHeight, refreshBtn.height)
-          spacing: Style.space(8)
-
-          Column {
-            id: titleCol
-            width: parent.width - refreshBtn.width - parent.spacing
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(2)
-
-            Text {
-              width: parent.width
-              text: "Steam Favorites"
-              textFormat: Text.PlainText
-              color: root.barForeground
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.subtitle
-              font.bold: true
-              elide: Text.ElideRight
-            }
-
-            Text {
-              width: parent.width
-              text: root.statusText
-              textFormat: Text.PlainText
-              color: root.barForeground
-              opacity: 0.6
-              font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.caption
-              elide: Text.ElideRight
+          title: "Steam"
+          meta: root.statusText
+          foreground: root.contentForeground
+          fontFamily: root.contentFontFamily
+          iconComponent: Component {
+            SteamIcon {
+              iconSize: Style.font.display
+              color: root.iconColor
+              fontFamily: root.contentFontFamily
             }
           }
-
-          PanelActionButton {
-            id: refreshBtn
-            anchors.verticalCenter: parent.verticalCenter
-            iconText: "󰑓"
-            tooltipText: "Atualizar"
-            foreground: root.barForeground
-            fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-            onClicked: root.refreshGames()
+          trailingControl: Component {
+            PanelActionButton {
+              iconText: "󰑓"
+              tooltipText: "Refresh"
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: root.refreshGames()
+            }
           }
         }
 
@@ -182,42 +195,38 @@ Panel {
           visible: root.noteText.length > 0
           text: root.noteText
           textFormat: Text.PlainText
-          color: root.barForeground
+          color: root.contentForeground
           opacity: 0.55
-          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.family: root.contentFontFamily
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
           maximumLineCount: 2
           elide: Text.ElideRight
         }
 
-        PanelSectionHeader {
-          width: parent.width
-          visible: root.games.length > 0
-          text: "BIBLIOTECA"
-          foreground: root.barForeground
-          fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-        }
-
-        // ---- Grid 2 colunas ----
         Flickable {
           id: gameFlick
           width: parent.width
-          height: Math.min(Style.space(360), grid.implicitHeight)
+          visible: root.games.length > 0
+          height: Math.min(root.maxGridHeight, grid.implicitHeight)
           implicitHeight: height
           contentWidth: width
           contentHeight: grid.implicitHeight
           clip: true
           boundsBehavior: Flickable.StopAtBounds
           flickableDirection: Flickable.VerticalFlick
-          visible: root.games.length > 0
+          interactive: contentHeight > height
+          ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
           Grid {
             id: grid
             width: gameFlick.width
-            columns: 2
+            columns: root.columns
             columnSpacing: root.gridGap
             rowSpacing: root.gridGap
+
+            readonly property int cellWidth: Math.max(1, Math.floor((width - columnSpacing) / columns))
+            readonly property int coverHeight: Math.round(cellWidth * 1.4)
 
             Repeater {
               model: root.games
@@ -226,155 +235,95 @@ Panel {
                 id: cell
                 required property var modelData
                 required property int index
-                width: root.cellWidth
-                height: coverBox.height + infoRow.height + Style.space(12)
 
-                readonly property int appid: modelData.appid
+                width: grid.cellWidth
+                height: grid.coverHeight
+
+                readonly property int appid: modelData && modelData.appid ? modelData.appid : 0
                 readonly property string gameName: root.displayName(modelData)
-                readonly property string localCover: modelData.cover || ""
-                readonly property string localLogo: modelData.logo || ""
-                readonly property string localIcon: modelData.icon || ""
-                property int coverStage: (modelData.cover || "") !== "" ? 0 : 1 // 0 local, 1 library CDN, 2 capsule, 3 header, 4 done
+                readonly property string localCover: modelData && modelData.cover ? String(modelData.cover) : ""
+                readonly property bool selected: root.cursorActive && root.cursorIndex === index
+                property int coverStage: localCover !== "" ? 0 : 1
 
                 function coverSource() {
-                  if (cell.coverStage === 0 && cell.localCover !== "") return cell.localCover
-                  if (cell.coverStage <= 1) return root.libraryCoverUrl(cell.appid)
-                  if (cell.coverStage === 2) return root.capsuleCoverUrl(cell.appid)
-                  return root.headerCoverUrl(cell.appid)
+                  if (coverStage === 0 && localCover !== "") return localCover
+                  if (coverStage <= 1) return root.libraryCoverUrl(appid)
+                  if (coverStage === 2) return root.capsuleCoverUrl(appid)
+                  return root.headerCoverUrl(appid)
                 }
 
                 Rectangle {
                   id: card
                   anchors.fill: parent
-                  radius: root.cardRadius
-                  color: cellHover.containsMouse
-                    ? Style.hoverFillFor(root.barForeground, Color.accent)
-                    : Style.normalFillFor(root.barForeground, Color.accent)
-                  border.width: 1
-                  border.color: cellHover.containsMouse
-                    ? Style.hoverBorderFor(root.barForeground, Color.accent)
-                    : Style.normalBorderFor(root.barForeground, Color.accent)
+                  radius: Style.cornerRadius
+                  color: Style.normalFillFor(root.contentForeground, Color.accent)
                   clip: true
+                  border.width: (cellHover.containsMouse || cell.selected) ? Math.max(1, Style.space(2)) : 1
+                  border.color: (cellHover.containsMouse || cell.selected)
+                    ? Style.hoverBorderFor(root.contentForeground, Color.accent)
+                    : Style.normalBorderFor(root.contentForeground, Color.accent)
 
-                  Behavior on color { ColorAnimation { duration: 90 } }
-
-                  Column {
+                  Image {
+                    id: cover
                     anchors.fill: parent
-                    spacing: 0
-
-                    // Capa do jogo (local primeiro, CDN como fallback).
-                    Item {
-                      id: coverBox
-                      width: parent.width
-                      height: root.coverHeight
-                      clip: true
-
-                      Image {
-                        id: cover
-                        anchors.fill: parent
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        cache: true
-                        source: cell.coverSource()
-                        onStatusChanged: {
-                          if (status === Image.Error && cell.coverStage < 4) {
-                            cell.coverStage += 1
-                            if (cell.coverStage <= 3)
-                              cover.source = cell.coverSource()
-                          }
-                        }
-                      }
-
-                      // Glyph de fallback quando não há arte.
-                      Rectangle {
-                        anchors.fill: parent
-                        visible: cover.status !== Image.Ready
-                        color: Qt.rgba(0, 0, 0, 0.14)
-
-                        Text {
-                          anchors.centerIn: parent
-                          text: "󰖹"
-                          color: root.barForeground
-                          opacity: 0.5
-                          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                          font.pixelSize: Style.font.display
-                        }
-                      }
-
-                      // Logo do jogo sobre a capa (quando disponível).
-                      Image {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.bottom: parent.bottom
-                        anchors.bottomMargin: Style.space(6)
-                        width: Math.min(parent.width - Style.space(16), Style.space(120))
-                        height: Style.space(26)
-                        fillMode: Image.PreserveAspectFit
-                        asynchronous: true
-                        cache: true
-                        visible: status === Image.Ready
-                        source: cell.localLogo
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    cache: true
+                    source: cell.coverSource()
+                    onStatusChanged: {
+                      if (status === Image.Error && cell.coverStage < 4) {
+                        cell.coverStage += 1
+                        if (cell.coverStage <= 3)
+                          source = cell.coverSource()
                       }
                     }
+                  }
 
-                    // Linha info: ícone + nome (sem prefixos).
-                    Item {
-                      id: infoRow
-                      width: parent.width
-                      height: Math.max(root.gameIconSize, nameText.implicitHeight) + Style.space(8)
+                  Rectangle {
+                    anchors.fill: parent
+                    visible: cover.status !== Image.Ready
+                    color: Qt.rgba(0, 0, 0, 0.18)
 
-                      Row {
-                        anchors.fill: parent
-                        anchors.leftMargin: Style.space(8)
-                        anchors.rightMargin: Style.space(8)
-                        anchors.topMargin: Style.space(4)
-                        anchors.bottomMargin: Style.space(4)
-                        spacing: Style.space(8)
-
-                        // Ícone do jogo (cache local 32px) com fallback.
-                        Item {
-                          width: root.gameIconSize
-                          height: root.gameIconSize
-                          anchors.verticalCenter: parent.verticalCenter
-
-                          Image {
-                            id: gameIcon
-                            anchors.fill: parent
-                            fillMode: Image.PreserveAspectFit
-                            asynchronous: true
-                            cache: true
-                            smooth: true
-                            visible: status === Image.Ready
-                            source: cell.localIcon
-                          }
-
-                          Text {
-                            anchors.centerIn: parent
-                            visible: cell.localIcon === "" || gameIcon.status !== Image.Ready
-                            text: "󰓓"
-                            color: root.barForeground
-                            opacity: 0.6
-                            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                            font.pixelSize: Style.font.body
-                          }
-                        }
-
-                        Text {
-                          id: nameText
-                          width: parent.width - root.gameIconSize - parent.spacing
-                          anchors.verticalCenter: parent.verticalCenter
-                          text: cell.gameName
-                          textFormat: Text.PlainText
-                          color: root.barForeground
-                          font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                          font.pixelSize: Style.font.body
-                          font.weight: cellHover.containsMouse ? Font.DemiBold : Font.Normal
-                          elide: Text.ElideRight
-                          maximumLineCount: 2
-                          wrapMode: Text.WordWrap
-                          lineHeight: 1.1
-                        }
-                      }
+                    SteamIcon {
+                      anchors.centerIn: parent
+                      iconSize: Style.font.display
+                      color: root.contentForeground
+                      fontFamily: root.contentFontFamily
+                      opacity: 0.35
                     }
+                  }
+
+                  Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: Math.max(Style.space(52), nameLabel.implicitHeight + Style.space(18))
+                    gradient: Gradient {
+                      GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0) }
+                      GradientStop { position: 0.4; color: Qt.rgba(0, 0, 0, 0.35) }
+                      GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.88) }
+                    }
+                  }
+
+                  Text {
+                    id: nameLabel
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.leftMargin: Style.space(8)
+                    anchors.rightMargin: Style.space(8)
+                    anchors.bottomMargin: Style.space(8)
+                    text: cell.gameName
+                    textFormat: Text.PlainText
+                    color: "#ffffff"
+                    style: Text.Outline
+                    styleColor: Qt.rgba(0, 0, 0, 0.7)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.body
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                    maximumLineCount: 2
+                    wrapMode: Text.WordWrap
                   }
 
                   MouseArea {
@@ -383,7 +332,11 @@ Panel {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: root.launchGame(cell.appid)
-                    onEntered: if (root.bar) root.bar.showTooltip(root, cell.gameName)
+                    onEntered: {
+                      root.cursorActive = true
+                      root.cursorIndex = cell.index
+                      if (root.bar) root.bar.showTooltip(root, cell.gameName)
+                    }
                     onExited: if (root.bar) root.bar.hideTooltip(root)
                   }
                 }
@@ -392,21 +345,19 @@ Panel {
           }
         }
 
-        // ---- Estado vazio ----
         Column {
           width: parent.width
-          visible: root.games.length === 0 && root.statusText !== "Carregando…"
+          visible: root.games.length === 0 && root.statusText !== "Loading…"
           spacing: Style.space(6)
           topPadding: Style.space(12)
           bottomPadding: Style.space(12)
 
-          Text {
+          SteamIcon {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: "󰖹"
-            color: root.barForeground
-            opacity: 0.4
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.display
+            iconSize: Style.font.display
+            color: root.contentForeground
+            fontFamily: root.contentFontFamily
+            opacity: 0.35
           }
 
           Text {
@@ -414,9 +365,9 @@ Panel {
             horizontalAlignment: Text.AlignHCenter
             text: root.statusText
             textFormat: Text.PlainText
-            color: root.barForeground
+            color: root.contentForeground
             opacity: 0.7
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
+            font.family: root.contentFontFamily
             font.pixelSize: Style.font.body
             wrapMode: Text.WordWrap
           }

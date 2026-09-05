@@ -1,8 +1,5 @@
 import QtQuick
-import Qt5Compat.GraphicalEffects
-import Quickshell
 import qs.Ui
-import qs.Commons
 
 BarWidget {
   id: root
@@ -32,16 +29,19 @@ BarWidget {
   }
 
   function injectPanel() {
-    if (!panelLoader.item) return
-    panelLoader.item.bar = root.bar
-    panelLoader.item.anchorItem = button
-    panelLoader.item.hostWidget = root
+    var target = panelLoader.item
+    if (!target) return
+    if ("bar" in target) target.bar = root.bar
+    if ("settings" in target) target.settings = root.settings
+    if ("anchorItem" in target) target.anchorItem = button
+    if ("hostWidget" in target) target.hostWidget = root
   }
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
   onBarChanged: injectPanel()
+  onSettingsChanged: injectPanel()
 
   Loader {
     id: panelLoader
@@ -54,53 +54,22 @@ BarWidget {
     }
   }
 
-  // Glyph-style Steam mark (monochrome asset tinted to bar foreground).
-  Item {
+  BarIconButton {
     id: button
-    implicitWidth: Style.space(26)
-    implicitHeight: root.barSize || Style.space(26)
-
-    Image {
-      id: steamGlyph
-      anchors.centerIn: parent
-      width: Style.font.icon
-      height: Style.font.icon
-      source: Qt.resolvedUrl("assets/steam-glyph.png")
-      sourceSize.width: Math.round(width * Screen.devicePixelRatio)
-      sourceSize.height: Math.round(height * Screen.devicePixelRatio)
-      fillMode: Image.PreserveAspectFit
-      smooth: true
-      asynchronous: true
-      visible: false
-    }
-
-    ColorOverlay {
-      anchors.centerIn: parent
-      width: steamGlyph.width
-      height: steamGlyph.height
-      source: steamGlyph
-      color: root.bar ? root.bar.barForeground : (root.barForeground || "#ffffff")
-      visible: steamGlyph.status === Image.Ready
-    }
-
-    // Fallback if the PNG fails to load (Nerd Font / FA steam).
-    Text {
-      anchors.centerIn: parent
-      visible: steamGlyph.status !== Image.Ready
-      text: "󰓓"
-      color: root.bar ? root.bar.barForeground : (root.barForeground || "#ffffff")
-      font.family: root.bar ? root.bar.fontFamily : Style.font.family
-      font.pixelSize: Style.font.icon
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      acceptedButtons: Qt.LeftButton
-      onClicked: root.toggle()
-      onEntered: if (root.bar) root.bar.showTooltip(root, "Steam Favorites")
-      onExited: if (root.bar) root.bar.hideTooltip(root)
+    anchors.fill: parent
+    bar: root.bar
+    text: "󰓓"
+    tooltipText: "Steam"
+    onPressed: function(buttonCode) {
+      if (buttonCode === Qt.RightButton) {
+        Qt.openUrlExternally("steam://open/games")
+        return
+      }
+      if (buttonCode === Qt.MiddleButton) {
+        if (panelLoader.item) panelLoader.item.refreshGames()
+        return
+      }
+      root.toggle()
     }
   }
 }

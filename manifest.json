@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.wolften.steam-favorites",
   "name": "Steam Favorites",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Wolften",
   "license": "MIT",
-  "description": "Bar widget that lists Steam favorites (or installed library) and launches games via steam://rungameid.",
+  "description": "Steam logo on the Omarchy bar; two-column library of game covers that launch via steam://rungameid.",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "BarWidget.qml"
