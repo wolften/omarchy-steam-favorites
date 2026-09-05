@@ -28,7 +28,7 @@ omarchy bar put io.github.wolften.steam-favorites --section left
 
 ## UI
 
-Panel shows a **2-column grid** with Steam CDN covers (`library_600x900`, falling back to `capsule_231x87`) and titles clipped with ellipsis. Covers are public CDN URLs by appid — no Steam Web API scraping.
+Panel shows a **2-column grid** no padrão Omarchy (`Style`/`Color`, `PanelSectionHeader`, `PanelActionButton`) with cover + logo + ícone do jogo e apenas o nome — sem prefixos como "instalado". Arte prioriza o cache local da Steam (`appcache/librarycache/<appid>` com fallback para CDN `library_600x900` → `capsule_231x87` → `header.jpg`).
 
 ## Usage
 
@@ -38,7 +38,7 @@ Panel shows a **2-column grid** with Steam CDN covers (`library_600x900`, fallin
 
 ## How games are discovered
 
-`scripts/discover-favorites.py` (run by the panel) **only lists installed games** (those with an `appmanifest_*.acf`). Non-games are filtered out (Proton*, Steam Linux Runtime*, Steamworks Common Redistributables, …).
+`scripts/discover-favorites.py` (run by the panel) **only lists installed games** (those with an `appmanifest_*.acf`). Non-games are filtered out (Proton*, Steam Linux Runtime*, Steamworks Common Redistributables, …). O JSON expõe apenas `appid`, `name`, `cover`, `logo` e `icon` (arquivos locais via `file://`) — nenhum rótulo de origem; a lista é ordenada alfabeticamente.
 
 Order:
 

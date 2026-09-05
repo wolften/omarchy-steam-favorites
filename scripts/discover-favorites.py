@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Discover installed Steam games (prefer favorites) and print JSON to stdout."""
+"""Discover installed Steam games (prefer favorites) and print JSON to stdout.
+
+Output games carry only: appid, name, cover, logo, icon.
+No "installed"/source labels are emitted — the panel shows clean names.
+Artwork prefers local Steam librarycache files, falling back to CDN in QML.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +28,16 @@ NON_GAME_APPIDS = {
     1070560,  # Steam Linux Runtime
     2180100,  # Steam Linux Runtime 3.0 sniper variants tracked loosely
 }
+
+# Local artwork priority inside appcache/librarycache/<appid>/
+COVER_FILENAMES = (
+    "library_600x900.jpg",
+    "library_capsule.jpg",
+    "library_header.jpg",
+    "header.jpg",
+    "library_hero.jpg",
+)
+LOGO_FILENAMES = ("logo.png",)
 
 
 def steam_roots() -> list[Path]:
@@ -124,24 +139,89 @@ def load_manual_json() -> list[dict]:
                     {
                         "appid": int(item["appid"]),
                         "name": str(item.get("name") or f"App {item['appid']}"),
-                        "source": "config",
                     }
                 )
     return games
 
 
+def find_artwork(appid: str, roots: list[Path]) -> dict[str, str | None]:
+    """Locate local cover/logo/icon for an appid.
+
+    Returns file:// URIs (or None) for keys cover, logo, icon.
+    Searches <root>/appcache/librarycache/<appid>/ recursively because
+    Steam stores full art inside hash-named subfolders.
+    """
+    cover: str | None = None
+    logo: str | None = None
+    icon: str | None = None
+    for root in roots:
+        base = root / "appcache" / "librarycache" / appid
+        if not base.is_dir():
+            continue
+        # Direct hits first (fast path, e.g. RDR2 keeps files at top level).
+        for name in COVER_FILENAMES:
+            candidate = base / name
+            if candidate.is_file() and cover is None:
+                cover = candidate.as_uri()
+                break
+        for name in LOGO_FILENAMES:
+            candidate = base / name
+            if candidate.is_file() and logo is None:
+                logo = candidate.as_uri()
+                break
+        if icon is None:
+            for candidate in sorted(base.glob("*.jpg")):
+                # Top-level small jpgs are the 32px client icons.
+                if candidate.is_file():
+                    icon = candidate.as_uri()
+                    break
+        if cover is not None and logo is not None and icon is not None:
+            break
+        # Deep search inside hash-named subfolders (Dota 2, Valheim, ...).
+        try:
+            files = [p for p in base.rglob("*") if p.is_file()]
+        except OSError:
+            continue
+        by_name: dict[str, Path] = {}
+        for path in files:
+            by_name.setdefault(path.name, path)
+        if cover is None:
+            for name in COVER_FILENAMES:
+                if name in by_name:
+                    cover = by_name[name].as_uri()
+                    break
+        if logo is None and "logo.png" in by_name:
+            logo = by_name["logo.png"].as_uri()
+        if icon is None:
+            # Prefer the smallest image as the client icon.
+            images = [p for p in files if p.suffix.lower() in (".jpg", ".png")]
+            if images:
+                try:
+                    smallest = min(images, key=lambda p: p.stat().st_size)
+                    # Only treat it as icon when it is small (< 20KB ≈ 32px).
+                    if smallest.stat().st_size < 20 * 1024:
+                        icon = smallest.as_uri()
+                except OSError:
+                    pass
+        if cover is not None and logo is not None and icon is not None:
+            break
+    return {"cover": cover, "logo": logo, "icon": icon}
+
+
+def make_entry(appid: int, name: str, roots: list[Path]) -> dict:
+    art = find_artwork(str(appid), roots)
+    return {
+        "appid": appid,
+        "name": name,
+        "cover": art["cover"],
+        "logo": art["logo"],
+        "icon": art["icon"],
+    }
+
+
 def discover() -> dict:
     roots = steam_roots()
     if not roots:
-        manual = load_manual_json()
-        if manual:
-            # Without Steam roots we cannot verify install — return empty with hint
-            return {
-                "ok": True,
-                "error": None,
-                "games": [],
-                "note": None,
-            }
         return {
             "ok": False,
             "error": "Steam install not found",
@@ -179,7 +259,7 @@ def discover() -> dict:
             continue
         if aid in seen:
             continue
-        games.append({"appid": aid, "name": name, "source": "config"})
+        games.append(make_entry(aid, name, roots))
         seen.add(aid)
 
     # Favorites that are installed games
@@ -192,16 +272,22 @@ def discover() -> dict:
             continue
         if aid in seen:
             continue
-        games.append({"appid": aid, "name": name, "source": "favorite"})
+        games.append(make_entry(aid, name, roots))
         seen.add(aid)
 
-    # Fallback: all installed real games (no uninstalled favorites)
+    # Fallback: all installed real games
     if not games:
-        for appid, name in sorted(installed.items(), key=lambda kv: kv[1].lower()):
+        for appid, name in installed.items():
             aid = int(appid)
             if not is_game(aid, name):
                 continue
-            games.append({"appid": aid, "name": name, "source": "installed"})
+            if aid in seen:
+                continue
+            games.append(make_entry(aid, name, roots))
+            seen.add(aid)
+
+    # Clean grid ordering: alphabetical, no source/installed prefixes.
+    games.sort(key=lambda g: str(g["name"]).lower())
 
     return {
         "ok": True,
