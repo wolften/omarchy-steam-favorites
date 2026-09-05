@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -26,9 +25,15 @@ Panel {
   readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
 
   readonly property int columns: 2
-  readonly property int panelWidth: Style.space(280)
-  readonly property int gridGap: Style.spacing.md
-  readonly property int maxGridHeight: Style.space(420)
+  readonly property int panelWidth: Style.space(200)
+  readonly property int gridGap: Style.spacing.sm
+  readonly property int nameHeight: Style.space(16)
+  readonly property int maxGridHeight: Style.space(360)
+  // contentWidth is the card outer size; covers must fit inside padding+border.
+  readonly property int innerWidth: Math.max(
+    1,
+    panel.contentWidth - panel.padding * 2 - Math.max(2, Style.space(2)) * 2 - 2
+  )
 
   function open() {
     refreshGames()
@@ -162,7 +167,7 @@ Panel {
 
       Column {
         id: bodyCol
-        width: parent.width
+        width: root.innerWidth
         spacing: Style.spacing.panelGap
 
         PanelHero {
@@ -208,25 +213,29 @@ Panel {
           id: gameFlick
           width: parent.width
           visible: root.games.length > 0
-          height: Math.min(root.maxGridHeight, grid.implicitHeight)
+          height: Math.min(root.maxGridHeight, gridBox.height)
           implicitHeight: height
           contentWidth: width
-          contentHeight: grid.implicitHeight
+          contentHeight: gridBox.height
           clip: true
           boundsBehavior: Flickable.StopAtBounds
           flickableDirection: Flickable.VerticalFlick
           interactive: contentHeight > height
-          ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-          Grid {
-            id: grid
+          Item {
+            id: gridBox
             width: gameFlick.width
-            columns: root.columns
-            columnSpacing: root.gridGap
-            rowSpacing: root.gridGap
+            height: {
+              var n = root.games.length
+              if (n <= 0) return 0
+              var rows = Math.ceil(n / root.columns)
+              return rows * cellH + (rows - 1) * gap
+            }
 
-            readonly property int cellWidth: Math.max(1, Math.floor((width - columnSpacing) / columns))
-            readonly property int coverHeight: Math.round(cellWidth * 1.4)
+            readonly property int gap: root.gridGap
+            readonly property int cellW: Math.max(1, Math.floor((width - gap) / root.columns))
+            readonly property int coverH: Math.round(cellW * 1.5)
+            readonly property int cellH: coverH + root.nameHeight
 
             Repeater {
               model: root.games
@@ -236,8 +245,11 @@ Panel {
                 required property var modelData
                 required property int index
 
-                width: grid.cellWidth
-                height: grid.coverHeight
+                width: gridBox.cellW
+                height: gridBox.cellH
+                x: (index % root.columns) * (gridBox.cellW + gridBox.gap)
+                y: Math.floor(index / root.columns) * (gridBox.cellH + gridBox.gap)
+                clip: true
 
                 readonly property int appid: modelData && modelData.appid ? modelData.appid : 0
                 readonly property string gameName: root.displayName(modelData)
@@ -253,8 +265,9 @@ Panel {
                 }
 
                 Rectangle {
-                  id: card
-                  anchors.fill: parent
+                  id: coverFrame
+                  width: parent.width
+                  height: gridBox.coverH
                   radius: Style.cornerRadius
                   color: Style.normalFillFor(root.contentForeground, Color.accent)
                   clip: true
@@ -266,7 +279,8 @@ Panel {
                   Image {
                     id: cover
                     anchors.fill: parent
-                    fillMode: Image.PreserveAspectCrop
+                    anchors.margins: 1
+                    fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     cache: true
                     source: cell.coverSource()
@@ -292,53 +306,37 @@ Panel {
                       opacity: 0.35
                     }
                   }
+                }
 
-                  Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    height: Math.max(Style.space(52), nameLabel.implicitHeight + Style.space(18))
-                    gradient: Gradient {
-                      GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0) }
-                      GradientStop { position: 0.4; color: Qt.rgba(0, 0, 0, 0.35) }
-                      GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.88) }
-                    }
-                  }
+                Text {
+                  id: nameLabel
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.top: coverFrame.bottom
+                  anchors.topMargin: Style.space(2)
+                  text: cell.gameName
+                  textFormat: Text.PlainText
+                  color: root.contentForeground
+                  opacity: (cellHover.containsMouse || cell.selected) ? 1 : 0.75
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                  maximumLineCount: 1
+                  horizontalAlignment: Text.AlignHCenter
+                }
 
-                  Text {
-                    id: nameLabel
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.leftMargin: Style.space(8)
-                    anchors.rightMargin: Style.space(8)
-                    anchors.bottomMargin: Style.space(8)
-                    text: cell.gameName
-                    textFormat: Text.PlainText
-                    color: "#ffffff"
-                    style: Text.Outline
-                    styleColor: Qt.rgba(0, 0, 0, 0.7)
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.body
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
-                    maximumLineCount: 2
-                    wrapMode: Text.WordWrap
+                MouseArea {
+                  id: cellHover
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.launchGame(cell.appid)
+                  onEntered: {
+                    root.cursorActive = true
+                    root.cursorIndex = cell.index
+                    if (root.bar) root.bar.showTooltip(root, cell.gameName)
                   }
-
-                  MouseArea {
-                    id: cellHover
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.launchGame(cell.appid)
-                    onEntered: {
-                      root.cursorActive = true
-                      root.cursorIndex = cell.index
-                      if (root.bar) root.bar.showTooltip(root, cell.gameName)
-                    }
-                    onExited: if (root.bar) root.bar.hideTooltip(root)
-                  }
+                  onExited: if (root.bar) root.bar.hideTooltip(root)
                 }
               }
             }
