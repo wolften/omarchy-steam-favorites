@@ -70,3 +70,7 @@ omarchy plugin remove io.github.wolften.steam-favorites
 - Requires `python3` on PATH for discovery.
 - Modern Steam may not keep favorites in local VDF; use the JSON file if the panel only shows installed games.
 - Plugins run unsandboxed inside `omarchy-shell` — review the code before enabling.
+
+## Review
+
+Opened for @Revisador against Quattro develop guide.
