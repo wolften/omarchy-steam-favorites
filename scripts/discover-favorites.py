@@ -1,13 +1,28 @@
 #!/usr/bin/env python3
-"""Discover Steam favorites / installed games and print JSON to stdout."""
+"""Discover installed Steam games (prefer favorites) and print JSON to stdout."""
 
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 from pathlib import Path
+
+NON_GAME_NAME = re.compile(
+    r"(?i)^(Proton(\b|[\s\-])|Steam Linux Runtime|Steamworks Common Redistributables|"
+    r"Steamworks Shared|Steam Linux Runtime Soldier|Steam Linux Runtime Scout|"
+    r"Steam Linux Runtime Sniper|Steam Linux Runtime Medic)"
+)
+
+# Known non-game / tool appids
+NON_GAME_APPIDS = {
+    228980,  # Steamworks Common Redistributables
+    1391110,  # Steam Linux Runtime - Soldier
+    1493710,  # Proton Experimental (sometimes listed)
+    1628350,  # Steam Linux Runtime - Sniper
+    1070560,  # Steam Linux Runtime
+    2180100,  # Steam Linux Runtime 3.0 sniper variants tracked loosely
+}
 
 
 def steam_roots() -> list[Path]:
@@ -33,9 +48,7 @@ def find_userdata(root: Path) -> list[Path]:
 
 
 def parse_vdf_apps_with_favorite(text: str) -> set[str]:
-    """Best-effort: find appid blocks that contain a favorite tag."""
     favorites: set[str] = set()
-    # Match apps/<appid> ... tags ... "favorite"
     for match in re.finditer(
         r'"(\d{2,})"\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}',
         text,
@@ -46,7 +59,6 @@ def parse_vdf_apps_with_favorite(text: str) -> set[str]:
             r'"\d+"\s*"favorite"', body, flags=re.IGNORECASE
         ):
             favorites.add(appid)
-    # Also catch tags { "0" "favorite" } near appid keys more loosely
     for match in re.finditer(
         r'"(\d{2,})"\s*\{[^}]*?"tags"\s*\{[^}]*?favorite[^}]*?\}',
         text,
@@ -56,7 +68,24 @@ def parse_vdf_apps_with_favorite(text: str) -> set[str]:
     return favorites
 
 
-def load_app_names(root: Path) -> dict[str, str]:
+def is_game(appid: int, name: str) -> bool:
+    if appid in NON_GAME_APPIDS:
+        return False
+    if NON_GAME_NAME.search(name or ""):
+        return False
+    # Extra: any name containing these phrases
+    lowered = (name or "").lower()
+    if "steam linux runtime" in lowered:
+        return False
+    if lowered.startswith("proton "):
+        return False
+    if "steamworks common redistributables" in lowered:
+        return False
+    return True
+
+
+def load_installed_apps(root: Path) -> dict[str, str]:
+    """appid -> name for titles that have an appmanifest (i.e. installed)."""
     names: dict[str, str] = {}
     library_folders = root / "steamapps" / "libraryfolders.vdf"
     steamapps_dirs = [root / "steamapps"]
@@ -102,19 +131,27 @@ def load_manual_json() -> list[dict]:
 
 
 def discover() -> dict:
-    manual = load_manual_json()
     roots = steam_roots()
-    if not roots and not manual:
+    if not roots:
+        manual = load_manual_json()
+        if manual:
+            # Without Steam roots we cannot verify install — return empty with hint
+            return {
+                "ok": True,
+                "error": None,
+                "games": [],
+                "note": "Steam not found; cannot verify installed games. Install Steam or fix paths.",
+            }
         return {
             "ok": False,
-            "error": "Steam install not found and no ~/.config/omarchy/steam-favorites.json",
+            "error": "Steam install not found",
             "games": [],
         }
 
+    installed: dict[str, str] = {}
     favorite_ids: set[str] = set()
-    names: dict[str, str] = {}
     for root in roots:
-        names.update(load_app_names(root))
+        installed.update(load_installed_apps(root))
         for user_dir in find_userdata(root):
             for rel in (
                 Path("7") / "remote" / "sharedconfig.vdf",
@@ -131,34 +168,40 @@ def discover() -> dict:
     games: list[dict] = []
     seen: set[int] = set()
 
-    for g in manual:
-        if g["appid"] not in seen:
-            games.append(g)
-            seen.add(g["appid"])
-
-    for appid in sorted(favorite_ids, key=lambda x: int(x)):
-        aid = int(appid)
+    # Manual config: only if installed + is a game
+    for g in load_manual_json():
+        aid = g["appid"]
+        key = str(aid)
+        if key not in installed:
+            continue
+        name = installed.get(key) or g["name"]
+        if not is_game(aid, name):
+            continue
         if aid in seen:
             continue
-        games.append(
-            {
-                "appid": aid,
-                "name": names.get(appid, f"App {appid}"),
-                "source": "favorite",
-            }
-        )
+        games.append({"appid": aid, "name": name, "source": "config"})
         seen.add(aid)
 
-    # Fallback: installed library (not true favorites) if nothing else
-    if not games and names:
-        for appid, name in sorted(names.items(), key=lambda kv: kv[1].lower()):
-            games.append(
-                {
-                    "appid": int(appid),
-                    "name": name,
-                    "source": "installed",
-                }
-            )
+    # Favorites that are installed games
+    for appid in sorted(favorite_ids, key=lambda x: int(x)):
+        if appid not in installed:
+            continue
+        aid = int(appid)
+        name = installed[appid]
+        if not is_game(aid, name):
+            continue
+        if aid in seen:
+            continue
+        games.append({"appid": aid, "name": name, "source": "favorite"})
+        seen.add(aid)
+
+    # Fallback: all installed real games (no uninstalled favorites)
+    if not games:
+        for appid, name in sorted(installed.items(), key=lambda kv: kv[1].lower()):
+            aid = int(appid)
+            if not is_game(aid, name):
+                continue
+            games.append({"appid": aid, "name": name, "source": "installed"})
 
     return {
         "ok": True,
@@ -166,8 +209,7 @@ def discover() -> dict:
         "steamRoots": [str(r) for r in roots],
         "games": games,
         "note": (
-            "Listed installed library (favorites not found in VDF). "
-            "Optional: ~/.config/omarchy/steam-favorites.json"
+            "Showing installed games (no favorites found in VDF)."
             if games and all(g.get("source") == "installed" for g in games)
             else None
         ),
