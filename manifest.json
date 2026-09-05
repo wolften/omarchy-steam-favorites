@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.wolften.steam-favorites",
+  "name": "Steam Favorites",
+  "version": "1.0.0",
+  "author": "Wolften",
+  "license": "MIT",
+  "description": "Bar widget that lists Steam favorites (or installed library) and launches games via steam://rungameid.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Steam Favorites",
+    "category": "Launcher",
+    "allowMultiple": false,
+    "defaultSection": "left"
+  }
+}
