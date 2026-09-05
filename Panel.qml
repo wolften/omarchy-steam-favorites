@@ -52,26 +52,34 @@ Panel {
     id: discover
     stdout: StdioCollector {
       id: outCollector
-      onStreamFinished: {
-        try {
-          var data = JSON.parse(outCollector.text)
-          if (data.games && data.games.length) {
-            root.games = data.games
-            root.statusText = data.games.length + " jogo(s)"
-            root.noteText = data.note || ""
-          } else {
-            root.games = []
-            root.statusText = data.error || "Nenhum jogo encontrado"
-            root.noteText = "Crie ~/.config/omarchy/steam-favorites.json (veja o README)"
-          }
-        } catch (e) {
+    }
+    stderr: StdioCollector {
+      id: errCollector
+    }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode !== 0 && (!outCollector.text || outCollector.text.length === 0)) {
+        root.games = []
+        root.statusText = "Falha ao descobrir jogos"
+        root.noteText = (errCollector.text || "python3 / script indisponível").trim()
+        return
+      }
+      try {
+        var data = JSON.parse(outCollector.text)
+        if (data.games && data.games.length) {
+          root.games = data.games
+          root.statusText = data.games.length + " jogo(s)"
+          root.noteText = data.note || ""
+        } else {
           root.games = []
-          root.statusText = "Falha ao ler lista da Steam"
-          root.noteText = String(e)
+          root.statusText = data.error || "Nenhum jogo instalado"
+          root.noteText = data.note || "Só lista jogos com appmanifest (instalados)."
         }
+      } catch (e) {
+        root.games = []
+        root.statusText = "Falha ao ler lista da Steam"
+        root.noteText = String(e)
       }
     }
-    stderr: StdioCollector {}
   }
 
   KeyboardPanel {
@@ -147,10 +155,7 @@ Panel {
             required property var modelData
             width: content.width
             bar: root.bar
-            text: (modelData.name || ("App " + modelData.appid))
-                  + (modelData.source === "favorite" ? "" :
-                     modelData.source === "config" ? " · config" :
-                     modelData.source === "installed" ? " · instalado" : "")
+            text: modelData.name || ("App " + modelData.appid)
             tooltipText: "Abrir steam://rungameid/" + modelData.appid
             onPressed: function(buttonCode) {
               if (buttonCode === Qt.LeftButton)

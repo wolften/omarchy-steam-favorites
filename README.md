@@ -34,13 +34,17 @@ omarchy bar put io.github.wolften.steam-favorites --section left
 
 ## How games are discovered
 
-`scripts/discover-favorites.py` (run by the panel) looks for:
+`scripts/discover-favorites.py` (run by the panel) **only lists installed games** (those with an `appmanifest_*.acf`). Non-games are filtered out (Proton*, Steam Linux Runtime*, Steamworks Common Redistributables, …).
 
-1. Manual list: `~/.config/omarchy/steam-favorites.json`
-2. Favorites tagged in Steam VDF files under `userdata/*/7/remote/sharedconfig.vdf` (and a best-effort pass on `localconfig.vdf`)
-3. Fallback: installed titles from `steamapps/appmanifest_*.acf`
+Order:
+
+1. Manual list intersected with installed: `~/.config/omarchy/steam-favorites.json`
+2. Favorites from VDF **that are also installed**
+3. Fallback: all installed real games
 
 Steam roots checked: `~/.steam/steam`, `~/.local/share/Steam`, Flatpak Steam data path.
+
+The bar uses a monochrome Steam glyph (`assets/steam-glyph.png`) tinted to the bar foreground.
 
 ### Manual JSON (recommended if favorites do not sync locally)
 
