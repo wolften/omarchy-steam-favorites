@@ -82,16 +82,44 @@ Panel {
     return "Game"
   }
 
-  function libraryCoverUrl(appid) {
-    return "https://cdn.cloudflare.steamstatic.com/steam/apps/" + appid + "/library_600x900.jpg"
+  // Covers are local files only (Steam librarycache or the plugin cache
+  // filled by scripts/fetch_covers.py). QML never loads remote URLs: the
+  // helper enforces connect/total timeouts, a hard byte limit, and image
+  // format/dimension validation before atomically caching a file.
+  readonly property int coverFetchCap: 100
+
+  function fetchMissingCovers() {
+    if (!root.games || root.games.length === 0) return
+    if (coverFetch.running) return
+    var missing = []
+    for (var i = 0; i < root.games.length && missing.length < root.coverFetchCap; ++i) {
+      var g = root.games[i]
+      if (g && g.appid && (!g.cover || String(g.cover) === ""))
+        missing.push(String(g.appid))
+    }
+    if (missing.length === 0) return
+    coverFetch.command = ["python3", pluginDir() + "/scripts/fetch_covers.py"].concat(missing)
+    coverFetch.running = true
   }
 
-  function capsuleCoverUrl(appid) {
-    return "https://cdn.cloudflare.steamstatic.com/steam/apps/" + appid + "/library_capsule.jpg"
-  }
-
-  function headerCoverUrl(appid) {
-    return "https://cdn.cloudflare.steamstatic.com/steam/apps/" + appid + "/header.jpg"
+  function applyFetchedCovers(map) {
+    if (!map || !root.games || root.games.length === 0) return
+    var updated = root.games.slice()
+    var changed = false
+    for (var i = 0; i < updated.length; ++i) {
+      var g = updated[i]
+      if (!g || !g.appid) continue
+      if (g.cover && String(g.cover) !== "") continue
+      var uri = map[String(g.appid)]
+      if (typeof uri === "string" && uri.indexOf("file://") === 0) {
+        var entry = {}
+        for (var k in g) entry[k] = g[k]
+        entry.cover = uri
+        updated[i] = entry
+        changed = true
+      }
+    }
+    if (changed) root.games = updated
   }
 
   function moveCursor(dx, dy) {
@@ -131,6 +159,8 @@ Panel {
           root.statusText = data.games.length === 1 ? "1 game" : data.games.length + " games"
           root.noteText = ""
           root.cursorIndex = Math.min(root.cursorIndex, data.games.length - 1)
+          // Fill covers absent from local disk via the bounded helper.
+          root.fetchMissingCovers()
         } else {
           root.games = []
           root.statusText = data.error || "No games found"
@@ -140,6 +170,21 @@ Panel {
         root.games = []
         root.statusText = "Could not read Steam library"
         root.noteText = String(e)
+      }
+    }
+  }
+
+  Process {
+    id: coverFetch
+    stdout: StdioCollector { id: fetchOutCollector }
+    stderr: StdioCollector { id: fetchErrCollector }
+    onExited: function(exitCode, exitStatus) {
+      if (!fetchOutCollector.text || fetchOutCollector.text.length === 0) return
+      try {
+        var map = JSON.parse(fetchOutCollector.text)
+        root.applyFetchedCovers(map)
+      } catch (e) {
+        // Keep placeholders; covers retry on the next refresh.
       }
     }
   }
@@ -253,16 +298,16 @@ Panel {
 
                 readonly property int appid: modelData && modelData.appid ? modelData.appid : 0
                 readonly property string gameName: root.displayName(modelData)
+                // Local file only: validated librarycache art or the plugin
+                // cache written by fetch_covers.py. Never a remote URL.
                 readonly property string localCover: modelData && modelData.cover ? String(modelData.cover) : ""
                 readonly property bool selected: root.cursorActive && root.cursorIndex === index
-                property int coverStage: localCover !== "" ? 0 : 1
-
-                function coverSource() {
-                  if (coverStage === 0 && localCover !== "") return localCover
-                  if (coverStage <= 1) return root.libraryCoverUrl(appid)
-                  if (coverStage === 2) return root.capsuleCoverUrl(appid)
-                  return root.headerCoverUrl(appid)
-                }
+                // Virtualize image loads: only cells near the viewport fetch
+                // pixels, so a large library cannot decode everything at
+                // once. Once decoded an image stays loaded while scrolling.
+                readonly property bool nearViewport: (y + gridBox.cellH >= gameFlick.contentY - gridBox.cellH)
+                  && (y <= gameFlick.contentY + gameFlick.height + gridBox.cellH)
+                property bool keepCover: false
 
                 Rectangle {
                   id: coverFrame
@@ -283,13 +328,13 @@ Panel {
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     cache: true
-                    source: cell.coverSource()
+                    // Bound the decoded size (cell pixels x2 for hidpi);
+                    // the helper already caps stored files at 2048px/4MiB.
+                    sourceSize: Qt.size(gridBox.cellW * 2, gridBox.coverH * 2)
+                    source: (cell.nearViewport || cell.keepCover) && cell.localCover !== ""
+                      ? cell.localCover : ""
                     onStatusChanged: {
-                      if (status === Image.Error && cell.coverStage < 4) {
-                        cell.coverStage += 1
-                        if (cell.coverStage <= 3)
-                          source = cell.coverSource()
-                      }
+                      if (status === Image.Ready) cell.keepCover = true
                     }
                   }
 

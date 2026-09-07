@@ -34,8 +34,16 @@ omarchy bar put io.github.wolften.steam-favorites --section right
   Tailscale, and the other brand icons).
 - Dropdown is a two-column grid of portrait library covers (2:3), with the
   title over a bottom scrim. No "installed" prefixes.
-- Artwork prefers the local Steam cache (`appcache/librarycache/<appid>`),
-  then the public CDN (`library_600x900` → `library_capsule` → `header`).
+- Artwork is always a local file: the Steam cache
+  (`appcache/librarycache/<appid>`) first, then the plugin cache
+  (`~/.cache/omarchy/plugins/io.github.wolften.steam-favorites/covers/`)
+  filled by `scripts/fetch_covers.py`. The panel never loads remote URLs.
+- Cover fetching goes through `scripts/fetch_covers.py`, which enforces a
+  5s connect timeout, a 15s total timeout per file, a 4 MiB hard byte
+  limit, JPEG/PNG magic-byte validation with dimension limits
+  (32–2048 px per side), atomic cache writes, and at most 4 concurrent
+  downloads. The grid additionally loads images only for cells near the
+  viewport and caps the decoded size via `Image.sourceSize`.
 
 ## Usage
 
@@ -49,7 +57,9 @@ omarchy bar put io.github.wolften.steam-favorites --section right
 `scripts/discover-favorites.py` (run by the panel) **only lists installed
 games** (those with an `appmanifest_*.acf`). Tools are filtered out (Proton*,
 Steam Linux Runtime*, Steamworks Common Redistributables, …). Each entry is
-`appid`, `name`, `cover`, `logo`, and `icon`. The grid is alphabetical.
+`appid`, `name`, `cover`, `logo`, and `icon`, where `cover` is always a
+local `file://` URI (or `null` until `fetch_covers.py` fills the cache).
+The grid is alphabetical.
 
 Order:
 

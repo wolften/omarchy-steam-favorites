@@ -3,15 +3,27 @@
 
 Output games carry only: appid, name, cover, logo, icon.
 No "installed"/source labels are emitted — the panel shows clean names.
-Artwork prefers local Steam librarycache files, falling back to CDN in QML.
+Artwork is always a local ``file://`` URI (Steam librarycache or the plugin
+cache filled by ``fetch-covers.py``). QML never loads remote URLs: CDN
+fetching happens only here, behind connect/total timeouts, a hard byte
+limit, and image format/dimension validation.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
+
+try:
+    # Bundled safe CDN fetcher (timeouts, byte cap, format/dimension
+    # validation, atomic cache writes, bounded concurrency).
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import fetch_covers
+except ImportError:  # offline / minimal environments: local art only
+    fetch_covers = None  # type: ignore[assignment]
 
 NON_GAME_NAME = re.compile(
     r"(?i)^(Proton(\b|[\s\-])|Steam Linux Runtime|Steamworks Common Redistributables|"
@@ -144,12 +156,51 @@ def load_manual_json() -> list[dict]:
     return games
 
 
+def plugin_cache_dir() -> Path:
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return (
+        Path(base)
+        / "omarchy"
+        / "plugins"
+        / "io.github.wolften.steam-favorites"
+        / "covers"
+    )
+
+
+def cached_cover_uri(appid: str) -> str | None:
+    """Return a validated cached-cover file:// URI, or None."""
+    cache_dir = plugin_cache_dir()
+    for suffix in (".jpg", ".png"):
+        candidate = cache_dir / f"{appid}{suffix}"
+        try:
+            if not candidate.is_file():
+                continue
+            if candidate.stat().st_size <= 0:
+                continue
+            if fetch_covers is not None:
+                try:
+                    data = candidate.read_bytes()
+                except OSError:
+                    continue
+                if fetch_covers.validate_image(data) is None:
+                    try:
+                        candidate.unlink()
+                    except OSError:
+                        pass
+                    continue
+            return candidate.as_uri()
+        except OSError:
+            continue
+    return None
+
+
 def find_artwork(appid: str, roots: list[Path]) -> dict[str, str | None]:
     """Locate local cover/logo/icon for an appid.
 
     Returns file:// URIs (or None) for keys cover, logo, icon.
     Searches <root>/appcache/librarycache/<appid>/ recursively because
     Steam stores full art inside hash-named subfolders.
+    Falls back to the validated plugin CDN cache (never a remote URL).
     """
     cover: str | None = None
     logo: str | None = None
@@ -205,6 +256,12 @@ def find_artwork(appid: str, roots: list[Path]) -> dict[str, str | None]:
                     pass
         if cover is not None and logo is not None and icon is not None:
             break
+    if cover is None:
+        # Validated plugin CDN cache (written by fetch-covers.py) — still a
+        # local file:// URI, never a remote URL. Network fetching itself
+        # happens in fetch-covers.py (invoked from Panel.qml), so discovery
+        # stays fast and offline-safe.
+        cover = cached_cover_uri(appid)
     return {"cover": cover, "logo": logo, "icon": icon}
 
 
